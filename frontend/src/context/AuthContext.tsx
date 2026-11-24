@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import authService, { User } from '../services/auth.service';
+import { SessionError } from '../lib/authErrors';
 
 interface AuthContextType {
     user: User | null;
@@ -17,26 +18,43 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     useEffect(() => {
         // Check if user is authenticated on mount
+        let cancelled = false;
+
         const initAuth = async () => {
             if (authService.isAuthenticated()) {
                 try {
                     const currentUser = await authService.getCurrentUser();
-                    setUser(currentUser);
+                    if (!cancelled) setUser(currentUser);
                 } catch (error) {
-                    console.error('Failed to fetch user:', error);
+                    console.warn('[auth] stored session is no longer valid:', error);
                     authService.logout();
                 }
             }
-            setLoading(false);
+            if (!cancelled) setLoading(false);
         };
 
         initAuth();
+
+        return () => {
+            cancelled = true;
+        };
     }, []);
 
     const login = async (email: string, password: string) => {
-        await authService.login({ email, password });
-        const currentUser = await authService.getCurrentUser();
-        setUser(currentUser);
+        // Trim the address only; the password is sent exactly as typed.
+        await authService.login({ email: email.trim(), password });
+
+        try {
+            const currentUser = await authService.getCurrentUser();
+            setUser(currentUser);
+        } catch (error) {
+            // Tokens were issued but the profile could not be loaded, so the
+            // session is unusable: drop it rather than leave a half-signed-in state.
+            console.warn('[auth] issued tokens could not be used to load the profile:', error);
+            authService.logout();
+            setUser(null);
+            throw new SessionError();
+        }
     };
 
     const logout = () => {

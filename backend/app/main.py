@@ -1,95 +1,151 @@
+"""FastAPI application entrypoint for MediQuery AI."""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request, status
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from app.database import engine, Base
-from app.routes import auth, documents, chat, analytics
-from dotenv import load_dotenv
-import logging
-import time
+from sqlalchemy import text
 
-# Import all models to ensure tables are created
-from app.models.user import User
-from app.models.document import Document
-from app.models.analytics import QueryLog, UsageStats
+from app.config import ConfigurationError, get_settings, validate_for_startup
+from app.database import Base, SessionLocal, engine
+from app.middlewares.http import RateLimitMiddleware, RequestContextMiddleware
+from app.providers.registry import provider_status
+from app.routes import analytics, auth, chat, documents, internal, tools
+from app.services.jobs import worker_loop
+from app.services.observability import configure_logging, install_log_filter
 
-# Load environment variables
-load_dotenv()
-
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+settings = get_settings()
+configure_logging()
+install_log_filter()
 logger = logging.getLogger(__name__)
 
-# Create database tables
-Base.metadata.create_all(bind=engine)
-logger.info("✓ Database tables created/verified")
 
-# Initialize FastAPI app
+@asynccontextmanager
+async def lifespan(app: FastAPI):  # noqa: ANN201
+    validate_for_startup(settings)
+
+    if not settings.is_production:
+        # Development/test convenience only; production schema comes from Alembic.
+        Base.metadata.create_all(bind=engine)
+
+    status_report = provider_status(settings)
+    missing = [name for name, info in status_report.items() if not info.get("configured")]
+    if missing:
+        logger.warning("Providers not configured: %s", ", ".join(missing))
+
+    stop_event = asyncio.Event()
+    worker_task = None
+    if settings.background_worker_enabled:
+        worker_task = asyncio.create_task(worker_loop(stop_event))
+        logger.info("In-process background worker enabled")
+
+    logger.info("MediQuery AI started environment=%s", settings.environment)
+    try:
+        yield
+    finally:
+        stop_event.set()
+        if worker_task is not None:
+            try:
+                await asyncio.wait_for(worker_task, timeout=10)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                worker_task.cancel()
+        logger.info("MediQuery AI shut down cleanly")
+
+
 app = FastAPI(
     title="MediQuery AI API",
-    description="Production-ready RAG-based Medical Chatbot API with Authentication and Analytics",
-    version="1.0.0",
+    description=(
+        "Cloud-native medical RAG API: hybrid retrieval, reranking, self-correcting "
+        "generation, claim verification, trusted web fallback and knowledge graph."
+    ),
+    version=settings.api_version,
     docs_url="/api/docs",
-    redoc_url="/api/redoc"
+    redoc_url="/api/redoc",
+    lifespan=lifespan,
 )
 
-# CORS configuration for production
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",  # Vite dev server
-        "http://localhost:3000",  # Alternative dev port
-        "https://mediquery-ai.vercel.app",  # Production frontend (update with actual domain)
-    ],
+    allow_origins=settings.cors_allow_list,
+    # Development only: localhost/127.0.0.1 on any port.  Empty in production.
+    allow_origin_regex=settings.cors_origin_regex or None,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Request-ID", "X-Worker-Token"],
+    expose_headers=["X-Request-ID", "X-Process-Time"],
 )
+app.add_middleware(RequestContextMiddleware)
+app.add_middleware(RateLimitMiddleware)
 
-# Request timing middleware
-@app.middleware("http")
-async def add_process_time_header(request: Request, call_next):
-    start_time = time.time()
-    response = await call_next(request)
-    process_time = time.time() - start_time
-    response.headers["X-Process-Time"] = str(process_time)
-    return response
 
-# Global exception handler
-@app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception):
-    logger.error(f"Global exception: {str(exc)}", exc_info=True)
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
     return JSONResponse(
-        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        content={"detail": "An internal server error occurred"}
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content={"detail": "Invalid request.", "errors": exc.errors()[:10]},
     )
 
-# Health check endpoint
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    logger.exception("Unhandled error on %s %s", request.method, request.url.path)
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={"detail": "An internal server error occurred."},
+    )
+
+
 @app.get("/health")
 async def health_check():
+    database_ok = True
+    try:
+        with SessionLocal() as db:
+            db.execute(text("SELECT 1"))
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Health check database failure: %s", exc)
+        database_ok = False
     return {
-        "status": "healthy",
+        "status": "healthy" if database_ok else "degraded",
         "service": "MediQuery AI API",
-        "version": "1.0.0"
+        "version": settings.api_version,
+        "database": "ok" if database_ok else "unavailable",
+        "config": settings.public_summary(),
+        "providers": provider_status(settings),
     }
 
-# Root endpoint
+
 @app.get("/")
 async def root():
     return {
-        "message": "Welcome to MediQuery AI API",
+        "message": "MediQuery AI API",
         "docs": "/api/docs",
-        "health": "/health"
+        "health": "/health",
+        "version": settings.api_version,
     }
 
-# Include routers
+
 app.include_router(auth.router)
 app.include_router(documents.router)
 app.include_router(chat.router)
 app.include_router(analytics.router)
+app.include_router(tools.router)
+app.include_router(internal.router)
 
-if __name__ == "__main__":
+
+if __name__ == "__main__":  # pragma: no cover
+    import os
+
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+
+    uvicorn.run(
+        "app.main:app",
+        host="0.0.0.0",
+        port=int(os.getenv("PORT", "8000")),
+        reload=not settings.is_production,
+    )

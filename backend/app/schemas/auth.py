@@ -1,34 +1,37 @@
-from pydantic import BaseModel, EmailStr, Field
-from typing import Optional
-from datetime import datetime
-from app.models.user import UserRole
+from __future__ import annotations
 
-# Request Schemas
+from datetime import datetime
+
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
+
+
 class UserRegister(BaseModel):
+    """Unified registration: no role selection."""
+
     email: EmailStr
-    password: str = Field(..., min_length=8)
-    full_name: str = Field(..., min_length=2)
-    role: UserRole
+    password: str = Field(..., min_length=8, max_length=72)
+    full_name: str = Field(..., min_length=2, max_length=200)
+
 
 class UserLogin(BaseModel):
     email: EmailStr
-    password: str
+    password: str = Field(..., min_length=1, max_length=128)
+
 
 class TokenRefresh(BaseModel):
     refresh_token: str
 
-# Response Schemas
+
 class Token(BaseModel):
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
 
+
 class UserResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     email: str
     full_name: str
-    role: UserRole
     created_at: datetime
-
-    class Config:
-        from_attributes = True

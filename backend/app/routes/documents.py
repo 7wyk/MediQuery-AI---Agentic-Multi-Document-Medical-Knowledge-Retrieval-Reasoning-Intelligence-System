@@ -1,185 +1,232 @@
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from sqlalchemy.orm import Session
-from typing import List
-from app.database import get_db
-from app.schemas.documents import DocumentResponse, DocumentListResponse, DocumentStatusResponse
-from app.middlewares.auth_middleware import get_current_user
-from app.models.user import User
-from app.models.document import Document, DocumentStatus
-from app.services.vectorstore import load_vectorstore, delete_document_vectors
-import logging
-import os
-from pathlib import Path
+from __future__ import annotations
 
-router = APIRouter(prefix="/api/v1/documents", tags=["Documents"])
-security = HTTPBearer()
+import hashlib
+import logging
+from datetime import datetime, timezone
+from typing import List
+
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from sqlalchemy.orm import Session
+
+from app.config import get_settings
+from app.database import get_db
+from app.middlewares.auth_middleware import get_current_user
+from app.models.document import Document, DocumentStatus
+from app.models.job import DocumentJob
+from app.models.user import User
+from app.schemas.documents import (
+    DocumentDownloadResponse,
+    DocumentListResponse,
+    DocumentResponse,
+    DocumentStatusResponse,
+    DocumentUploadResponse,
+    UploadRejection,
+)
+from app.services.extraction import ExtractionError, detect_file_type
+from app.services.indexing import all_graph_and_chunks_deleted
+from app.services.jobs import enqueue_document_job
+from app.services.storage import (
+    StorageError,
+    build_storage_path,
+    get_storage,
+    sanitize_filename,
+)
+import uuid
+
 logger = logging.getLogger(__name__)
 
-@router.post("/upload", response_model=List[DocumentResponse])
+router = APIRouter(prefix="/api/v1/documents", tags=["Documents"])
+
+
+def _owned_document(db: Session, user: User, doc_id: str) -> Document:
+    document = (
+        db.query(Document)
+        .filter(Document.id == doc_id, Document.user_id == user.id)
+        .first()
+    )
+    if document is None:
+        # Same 404 whether it does not exist or belongs to another user.
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+    return document
+
+
+@router.post("/upload", response_model=DocumentUploadResponse)
 async def upload_documents(
     files: List[UploadFile] = File(...),
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-    db: Session = Depends(get_db)
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
-    """
-    Upload PDF documents for the authenticated user
-    """
-    user = await get_current_user(credentials, db)
-    
-    # Validate file types
-    for file in files:
-        if not file.filename.endswith('.pdf'):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid file type: {file.filename}. Only PDF files are allowed."
-            )
-    
-    try:
-        documents = load_vectorstore(files, user.id, db)
-        return documents
-    except Exception as e:
-        logger.error(f"Error uploading documents: {str(e)}")
+    """Accept multimodal medical documents, store them privately, queue ingestion."""
+    settings = get_settings()
+    if not files:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No files provided")
+    if len(files) > settings.max_files_per_request:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error processing documents: {str(e)}"
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Upload at most {settings.max_files_per_request} files per request",
         )
+
+    created: List[Document] = []
+    rejected: List[UploadRejection] = []
+
+    for upload in files:
+        filename = sanitize_filename(upload.filename or "document")
+        try:
+            data = await upload.read()
+        except Exception:  # noqa: BLE001
+            rejected.append(UploadRejection(filename=filename, reason="The file could not be read."))
+            continue
+        finally:
+            await upload.close()
+
+        if not data:
+            rejected.append(UploadRejection(filename=filename, reason="The uploaded file is empty."))
+            continue
+        if len(data) > settings.max_upload_bytes:
+            rejected.append(
+                UploadRejection(
+                    filename=filename,
+                    reason=f"File exceeds the {settings.max_upload_mb} MB limit.",
+                )
+            )
+            continue
+
+        try:
+            detect_file_type(data, filename)
+        except ExtractionError as exc:
+            rejected.append(UploadRejection(filename=filename, reason=str(exc)))
+            continue
+
+        doc_id = str(uuid.uuid4())
+        storage_path = build_storage_path(user.id, doc_id, filename)
+        try:
+            await get_storage().upload(
+                storage_path,
+                data,
+                upload.content_type or "application/octet-stream",
+            )
+        except StorageError as exc:
+            logger.error("Storage upload failed for %s: %s", filename, exc)
+            rejected.append(
+                UploadRejection(
+                    filename=filename,
+                    reason="Document storage is unavailable. Please retry shortly.",
+                )
+            )
+            continue
+
+        document = Document(
+            id=doc_id,
+            user_id=user.id,
+            filename=filename,
+            storage_path=storage_path,
+            mime_type=upload.content_type,
+            file_size=len(data),
+            file_hash=hashlib.sha256(data).hexdigest(),
+            status=DocumentStatus.QUEUED.value,
+            progress=0,
+            stage="queued",
+        )
+        db.add(document)
+        db.commit()
+        db.refresh(document)
+        enqueue_document_job(db, document_id=document.id, user_id=user.id)
+        created.append(document)
+
+    if not created:
+        return DocumentUploadResponse(
+            documents=[],
+            rejected=rejected,
+            message="None of the uploaded files could be accepted.",
+        )
+    return DocumentUploadResponse(
+        documents=[DocumentResponse.model_validate(document, from_attributes=True) for document in created],
+        rejected=rejected,
+        message=f"Queued {len(created)} document(s) for processing.",
+    )
+
 
 @router.get("", response_model=DocumentListResponse)
-async def list_documents(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-    db: Session = Depends(get_db)
+def list_documents(
+    user: User = Depends(get_current_user), db: Session = Depends(get_db)
 ):
-    """
-    List all documents for the authenticated user
-    """
-    user = await get_current_user(credentials, db)
-    
-    documents = db.query(Document).filter(
-        Document.user_id == user.id
-    ).order_by(Document.upload_date.desc()).all()
-    
-    return {
-        "documents": documents,
-        "total": len(documents)
-    }
+    documents = (
+        db.query(Document)
+        .filter(Document.user_id == user.id)
+        .order_by(Document.upload_date.desc())
+        .all()
+    )
+    return {"documents": documents, "total": len(documents)}
+
 
 @router.get("/{doc_id}/status", response_model=DocumentStatusResponse)
-async def get_document_status(
-    doc_id: int,
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-    db: Session = Depends(get_db)
+def get_document_status(
+    doc_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
-    """
-    Get processing status of a specific document
-    """
-    user = await get_current_user(credentials, db)
-    
-    document = db.query(Document).filter(
-        Document.id == doc_id,
-        Document.user_id == user.id
-    ).first()
-    
-    if not document:
+    return _owned_document(db, user, doc_id)
+
+
+@router.get("/{doc_id}/download", response_model=DocumentDownloadResponse)
+async def get_download_url(
+    doc_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    document = _owned_document(db, user, doc_id)
+    settings = get_settings()
+    url = await get_storage().signed_url(document.storage_path)
+    if not url:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Document not found"
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="Signed download URLs require Supabase Storage.",
         )
-    
-    return document
+    return {"url": url, "expires_in": settings.signed_url_expires_seconds}
+
 
 @router.delete("/{doc_id}")
 async def delete_document(
-    doc_id: int,
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-    db: Session = Depends(get_db)
+    doc_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
-    """
-    Delete a document and its vectors
-    """
-    user = await get_current_user(credentials, db)
-    
-    document = db.query(Document).filter(
-        Document.id == doc_id,
-        Document.user_id == user.id
-    ).first()
-    
-    if not document:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Document not found"
-        )
-    
+    document = _owned_document(db, user, doc_id)
+    storage_path = document.storage_path
     try:
-        # Delete vectors from Pinecone
-        delete_document_vectors(document)
-        
-        # Delete file from disk
-        file_path = Path(f"./uploaded_docs/{user.id}_{document.filename}")
-        if file_path.exists():
-            file_path.unlink()
-        
-        # Delete from database
+        all_graph_and_chunks_deleted(db, document.id)
+        db.query(DocumentJob).filter(DocumentJob.document_id == document.id).delete(
+            synchronize_session=False
+        )
         db.delete(document)
         db.commit()
-        
-        return {"message": "Document deleted successfully"}
-    except Exception as e:
-        logger.error(f"Error deleting document: {str(e)}")
+    except Exception as exc:  # noqa: BLE001
+        db.rollback()
+        logger.error("Document deletion failed: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error deleting document: {str(e)}"
+            detail="The document could not be deleted. Please retry.",
         )
+    try:
+        await get_storage().delete(storage_path)
+    except StorageError as exc:
+        logger.warning("Stored object cleanup failed for %s: %s", storage_path, exc)
+    return {"message": "Document deleted successfully", "document_id": doc_id}
+
 
 @router.post("/{doc_id}/reindex")
-async def reindex_document(
-    doc_id: int,
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-    db: Session = Depends(get_db)
+def reindex_document(
+    doc_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
-    """
-    Re-index a document (delete and re-upload vectors)
-    """
-    user = await get_current_user(credentials, db)
-    
-    document = db.query(Document).filter(
-        Document.id == doc_id,
-        Document.user_id == user.id
-    ).first()
-    
-    if not document:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Document not found"
-        )
-    
-    try:
-        # Delete existing vectors
-        delete_document_vectors(document)
-        
-        # Update status to processing
-        document.status = DocumentStatus.PROCESSING
-        db.commit()
-        
-        # Re-upload (simplified - in production, use background task)
-        file_path = Path(f"./uploaded_docs/{user.id}_{document.filename}")
-        if not file_path.exists():
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Document file not found on disk"
-            )
-        
-        # TODO: Implement re-indexing logic
-        document.status = DocumentStatus.COMPLETED
-        db.commit()
-        
-        return {"message": "Document re-indexed successfully"}
-    except Exception as e:
-        logger.error(f"Error re-indexing document: {str(e)}")
-        document.status = DocumentStatus.FAILED
-        document.error_message = str(e)
-        db.commit()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error re-indexing document: {str(e)}"
-        )
+    document = _owned_document(db, user, doc_id)
+    document.status = DocumentStatus.QUEUED.value
+    document.stage = "queued"
+    document.progress = 0
+    document.error_message = None
+    document.rejection_reason = None
+    document.processed_at = None
+    db.commit()
+    enqueue_document_job(db, document_id=document.id, user_id=user.id, force=True)
+    return {"message": "Document queued for re-indexing", "document_id": doc_id}

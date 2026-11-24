@@ -1,54 +1,63 @@
-from fastapi import APIRouter, Depends
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from __future__ import annotations
+
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
+
 from app.database import get_db
-from app.schemas.analytics import UsageOverview, UsageGraphData, TopTopics
 from app.middlewares.auth_middleware import get_current_user
 from app.models.user import User
-from app.services.analytics import get_usage_overview, get_usage_graph_data, get_top_topics
+from app.schemas.analytics import (
+    ObservabilityOverview,
+    ProcessingStatusResponse,
+    TopTopics,
+    UsageGraphData,
+    UsageOverview,
+)
+from app.services.analytics import (
+    get_observability_overview,
+    get_processing_status,
+    get_top_topics,
+    get_usage_graph_data,
+    get_usage_overview,
+)
 
 router = APIRouter(prefix="/api/v1/analytics", tags=["Analytics"])
-security = HTTPBearer()
+
 
 @router.get("/overview", response_model=UsageOverview)
-async def get_overview(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-    db: Session = Depends(get_db)
+def get_overview(
+    user: User = Depends(get_current_user), db: Session = Depends(get_db)
 ):
-    """
-    Get overall usage statistics for the authenticated user
-    """
-    user = await get_current_user(credentials, db)
-    stats = get_usage_overview(db, user.id)
-    return stats
+    return get_usage_overview(db, user.id)
+
 
 @router.get("/usage-graph", response_model=UsageGraphData)
-async def get_usage_graph(
-    period: str = "daily",
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-    db: Session = Depends(get_db)
+def get_usage_graph(
+    period: str = Query(default="daily", pattern="^(daily|weekly)$"),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
-    """
-    Get usage data for graphs (daily or weekly)
-    """
-    user = await get_current_user(credentials, db)
-    data_points = get_usage_graph_data(db, user.id, period)
-    
-    return {
-        "data_points": data_points,
-        "period": period
-    }
+    return {"data_points": get_usage_graph_data(db, user.id, period), "period": period}
+
 
 @router.get("/top-topics", response_model=TopTopics)
-async def get_top_topics_route(
-    limit: int = 5,
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-    db: Session = Depends(get_db)
+def get_top_topics_route(
+    limit: int = Query(default=5, ge=1, le=20),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
-    """
-    Get most queried topics
-    """
-    user = await get_current_user(credentials, db)
-    topics = get_top_topics(db, user.id, limit)
-    
-    return {"topics": topics}
+    return {"topics": get_top_topics(db, user.id, limit)}
+
+
+@router.get("/observability", response_model=ObservabilityOverview)
+def get_observability(
+    user: User = Depends(get_current_user), db: Session = Depends(get_db)
+):
+    return get_observability_overview(db, user.id)
+
+
+@router.get("/processing-status", response_model=ProcessingStatusResponse)
+def get_processing_status_route(
+    user: User = Depends(get_current_user), db: Session = Depends(get_db)
+):
+    return get_processing_status(db, user.id)

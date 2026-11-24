@@ -4,7 +4,6 @@ export interface RegisterData {
     email: string;
     password: string;
     full_name: string;
-    role: 'doctor' | 'student';
 }
 
 export interface LoginData {
@@ -22,7 +21,6 @@ export interface User {
     id: number;
     email: string;
     full_name: string;
-    role: 'doctor' | 'student';
     created_at: string;
 }
 
@@ -36,7 +34,6 @@ const authService = {
         const response = await api.post<AuthResponse>('/api/v1/auth/login', data);
         const { access_token, refresh_token } = response.data;
 
-        // Store tokens
         localStorage.setItem('access_token', access_token);
         localStorage.setItem('refresh_token', refresh_token);
 

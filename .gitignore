@@ -38,3 +38,116 @@ backend/medicalAssistant/
 # Uploaded files
 uploaded_docs/
 backend/uploaded_docs/
+
+
+# ============================================================
+# MediQuery AI - Root Git Ignore
+# ============================================================
+
+# ---------------- ENVIRONMENT VARIABLES & SECRETS ----------------
+.env
+.env.*
+**/.env
+**/.env.*
+!.env.example
+!**/.env.example
+!.env.template
+!**/.env.template
+
+# ---------------- PYTHON ----------------
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+*.egg-info/
+.eggs/
+.pybuild/
+
+# Python virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# ---------------- NODE.JS / FRONTEND ----------------
+node_modules/
+**/node_modules/
+
+# Build outputs
+dist/
+build/
+out/
+.next/
+.nuxt/
+.svelte-kit/
+coverage/
+
+# Vite
+.vite/
+
+# ---------------- DATABASES ----------------
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+
+# ---------------- MEDICAL DOCUMENTS & USER DATA ----------------
+backend/uploaded_docs/
+backend/user_uploads/
+backend/uploads/
+backend/storage/
+
+# Uploaded files and private documents
+uploads/
+user_uploads/
+*.pdf
+*.doc
+*.docx
+
+# ---------------- LOGS & TEMPORARY FILES ----------------
+*.log
+logs/
+tmp/
+temp/
+.cache/
+*.tmp
+*.bak
+*.swp
+*.swo
+
+# ---------------- IDE & EDITORS ----------------
+.idea/
+.vscode/
+*.code-workspace
+
+# Freebuff local configuration
+.freebuff/
+
+# Cloud attachments
+.cloud-attachments/
+
+# ---------------- OPERATING SYSTEM ----------------
+.DS_Store
+.DS_Store?
+Thumbs.db
+Desktop.ini
+
+# ---------------- SECURITY & CERTIFICATES ----------------
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+credentials/
+
+# ---------------- TEST & DEVELOPMENT ARTIFACTS ----------------
+.pytest_cache/
+test-results/
+playwright-report/
+test-results.xml

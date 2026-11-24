@@ -1,55 +1,65 @@
-from fastapi import Request, HTTPException, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from sqlalchemy.orm import Session
-from app.services.auth import verify_token
-from app.models.user import User
-from app.database import SessionLocal
+"""FastAPI authentication dependencies."""
+
+from __future__ import annotations
+
+import logging
 from typing import Optional
 
-security = HTTPBearer()
+from fastapi import Depends, Header, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy.orm import Session
+
+from app.config import get_settings
+from app.database import get_db
+from app.models.user import User
+from app.services.auth import verify_token
+
+logger = logging.getLogger(__name__)
+
+bearer_scheme = HTTPBearer(auto_error=False)
+
 
 async def get_current_user(
-    credentials: HTTPAuthorizationCredentials,
-    db: Session
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
+    db: Session = Depends(get_db),
 ) -> User:
+    """Resolve the caller from the signed JWT only.
+
+    Client-supplied user ids are never trusted; ownership is always derived from
+    this server-side identity.
     """
-    Verify JWT token and return current user
-    """
-    token = credentials.credentials
-    payload = verify_token(token, token_type="access")
-    
+    if credentials is None or not credentials.credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    payload = verify_token(credentials.credentials, token_type="access")
     if payload is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired token",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
-    user_id: int = payload.get("sub")
-    if user_id is None:
+    try:
+        user_id = int(payload.get("sub", ""))
+    except (TypeError, ValueError):
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token payload",
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload"
         )
-    
-    user = db.query(User).filter(User.id == user_id).first()
-    if user is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User not found",
-        )
-    
+    user = db.get(User, user_id)
+    if user is None or not user.is_active:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
     return user
 
-def require_role(allowed_roles: list):
-    """
-    Decorator to check if user has required role
-    """
-    def role_checker(user: User):
-        if user.role not in allowed_roles:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Access denied. Required roles: {allowed_roles}",
-            )
-        return user
-    return role_checker
+
+def require_worker_token(x_worker_token: str = Header(default="")) -> None:
+    """Protect internal job-processing endpoints used by a Render cron/worker."""
+    settings = get_settings()
+    if not settings.worker_token:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Worker endpoint is disabled (WORKER_TOKEN not configured)",
+        )
+    if x_worker_token != settings.worker_token:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid worker token")

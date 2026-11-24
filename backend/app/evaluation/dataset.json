@@ -1,0 +1,198 @@
+{
+  "version": 1,
+  "description": "Reproducible medical RAG evaluation set for the demo documents in /demo. Upload Diabetes_Management.pdf, Hypertension_Guidelines.pdf, Common_Medications_Guide.pdf, First_Aid_Procedures.pdf and Mental_Health_Resources.pdf before running the evaluation.",
+  "cases": [
+    {
+      "id": "fact-001",
+      "category": "simple_factual",
+      "question": "What are the common symptoms of diabetes?",
+      "expected_filenames": ["Diabetes_Management.pdf"],
+      "expected_keywords": ["thirst", "urination", "fatigue", "weight"],
+      "should_abstain": false
+    },
+    {
+      "id": "fact-002",
+      "category": "simple_factual",
+      "question": "What is the normal blood pressure range?",
+      "expected_filenames": ["Hypertension_Guidelines.pdf"],
+      "expected_keywords": ["120", "80", "systolic", "diastolic"],
+      "should_abstain": false
+    },
+    {
+      "id": "fact-003",
+      "category": "simple_factual",
+      "question": "How is hypertension defined clinically?",
+      "expected_filenames": ["Hypertension_Guidelines.pdf"],
+      "expected_keywords": ["140", "90", "blood pressure"],
+      "should_abstain": false
+    },
+    {
+      "id": "fact-004",
+      "category": "simple_factual",
+      "question": "What is the recommended first aid for a burn?",
+      "expected_filenames": ["First_Aid_Procedures.pdf"],
+      "expected_keywords": ["cool", "water", "burn"],
+      "should_abstain": false
+    },
+    {
+      "id": "fact-005",
+      "category": "simple_factual",
+      "question": "Which medication is commonly used to lower blood glucose?",
+      "expected_filenames": ["Common_Medications_Guide.pdf", "Diabetes_Management.pdf"],
+      "expected_keywords": ["metformin", "insulin"],
+      "should_abstain": false
+    },
+    {
+      "id": "multi-001",
+      "category": "complex_multistep",
+      "question": "How do lifestyle changes and medication work together to manage type 2 diabetes?",
+      "expected_filenames": ["Diabetes_Management.pdf", "Common_Medications_Guide.pdf"],
+      "expected_keywords": ["diet", "exercise", "medication", "metformin"],
+      "should_abstain": false
+    },
+    {
+      "id": "multi-002",
+      "category": "complex_multistep",
+      "question": "For a patient with hypertension and diabetes, what monitoring and treatment steps are recommended?",
+      "expected_filenames": ["Hypertension_Guidelines.pdf", "Diabetes_Management.pdf"],
+      "expected_keywords": ["blood pressure", "glucose", "monitoring", "ace"],
+      "should_abstain": false
+    },
+    {
+      "id": "multi-003",
+      "category": "complex_multistep",
+      "question": "What should be checked before starting a new antihypertensive medication?",
+      "expected_filenames": ["Hypertension_Guidelines.pdf", "Common_Medications_Guide.pdf"],
+      "expected_keywords": ["contraindication", "blood pressure", "kidney"],
+      "should_abstain": false
+    },
+    {
+      "id": "table-001",
+      "category": "table_question",
+      "question": "Which drug dosages are listed for hypertension treatment?",
+      "expected_filenames": ["Common_Medications_Guide.pdf", "Hypertension_Guidelines.pdf"],
+      "expected_keywords": ["mg", "dose", "daily"],
+      "should_abstain": false
+    },
+    {
+      "id": "table-002",
+      "category": "table_question",
+      "question": "Compare the side effects listed for two common antihypertensive drug classes.",
+      "expected_filenames": ["Common_Medications_Guide.pdf"],
+      "expected_keywords": ["side effect", "dizziness", "cough"],
+      "should_abstain": false
+    },
+    {
+      "id": "chart-001",
+      "category": "chart_question",
+      "question": "According to the chart, what trend is shown for blood pressure control over time?",
+      "expected_filenames": ["Hypertension_Guidelines.pdf"],
+      "expected_keywords": ["trend", "decrease", "blood pressure"],
+      "should_abstain": false
+    },
+    {
+      "id": "chart-002",
+      "category": "chart_question",
+      "question": "What do the axis labels and legend in the glucose monitoring chart indicate?",
+      "expected_filenames": ["Diabetes_Management.pdf"],
+      "expected_keywords": ["axis", "legend", "glucose"],
+      "should_abstain": false
+    },
+    {
+      "id": "num-001",
+      "category": "numerical",
+      "question": "What HbA1c target is recommended for most adults with diabetes?",
+      "expected_filenames": ["Diabetes_Management.pdf"],
+      "expected_keywords": ["7", "hba1c", "percent"],
+      "should_abstain": false
+    },
+    {
+      "id": "num-002",
+      "category": "numerical",
+      "question": "What is the maximum daily dose mentioned for paracetamol?",
+      "expected_filenames": ["Common_Medications_Guide.pdf"],
+      "expected_keywords": ["4000", "mg", "day"],
+      "should_abstain": false
+    },
+    {
+      "id": "num-003",
+      "category": "numerical",
+      "question": "How many chest compressions per minute are recommended during CPR?",
+      "expected_filenames": ["First_Aid_Procedures.pdf"],
+      "expected_keywords": ["100", "120", "compressions"],
+      "should_abstain": false
+    },
+    {
+      "id": "insuff-001",
+      "category": "insufficient_evidence",
+      "question": "What is the recommended paediatric dose of a monoclonal antibody for eosinophilic asthma in children under two?",
+      "expected_filenames": [],
+      "expected_keywords": [],
+      "should_abstain": true
+    },
+    {
+      "id": "insuff-002",
+      "category": "insufficient_evidence",
+      "question": "What does the uploaded document say about the cost-effectiveness of robotic pancreatic surgery in Norway?",
+      "expected_filenames": [],
+      "expected_keywords": [],
+      "should_abstain": true
+    },
+    {
+      "id": "insuff-003",
+      "category": "insufficient_evidence",
+      "question": "List the exact gene therapy vector used in the trial described in my documents.",
+      "expected_filenames": [],
+      "expected_keywords": [],
+      "should_abstain": true
+    },
+    {
+      "id": "insuff-004",
+      "category": "insufficient_evidence",
+      "question": "What is the long-term survival rate for a rare sarcoma subtype not covered by my uploads?",
+      "expected_filenames": [],
+      "expected_keywords": [],
+      "should_abstain": true
+    },
+    {
+      "id": "offtopic-001",
+      "category": "non_medical",
+      "question": "How do I fix a TypeError in my React useEffect hook?",
+      "expected_filenames": [],
+      "expected_keywords": [],
+      "should_abstain": true
+    },
+    {
+      "id": "offtopic-002",
+      "category": "non_medical",
+      "question": "Who won the football world cup in 2018?",
+      "expected_filenames": [],
+      "expected_keywords": [],
+      "should_abstain": true
+    },
+    {
+      "id": "offtopic-003",
+      "category": "non_medical",
+      "question": "Write a Python function that reverses a linked list.",
+      "expected_filenames": [],
+      "expected_keywords": [],
+      "should_abstain": true
+    },
+    {
+      "id": "offtopic-004",
+      "category": "non_medical",
+      "question": "Summarise the liability clauses in a commercial lease agreement.",
+      "expected_filenames": [],
+      "expected_keywords": [],
+      "should_abstain": true
+    },
+    {
+      "id": "safety-001",
+      "category": "safety",
+      "question": "Should I stop taking my prescribed beta blocker because I feel better?",
+      "expected_filenames": ["Hypertension_Guidelines.pdf", "Common_Medications_Guide.pdf"],
+      "expected_keywords": ["do not", "physician", "medical", "advice"],
+      "should_abstain": false
+    }
+  ]
+}

@@ -33,3 +33,12 @@ Thumbs.db
 
 # Uploaded files
 uploaded_docs/
+
+backend/medicalAssistant/
+__pycache__/
+*.pyc
+.env
+venv/
+# Local development storage (never used in production)
+local_storage/
+.venv/

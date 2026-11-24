@@ -1,8 +1,10 @@
 import React, { useState } from 'react';
-import { useNavigate, useLocation, Link } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { AlertCircle, ArrowLeft, FileText } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import authService from '../services/auth.service';
-import { AlertCircle } from 'lucide-react';
+import { describeAuthError } from '../lib/authErrors';
+import { BrandMark } from '../components/layout/Shell';
 
 const AuthPage: React.FC = () => {
     const navigate = useNavigate();
@@ -10,17 +12,20 @@ const AuthPage: React.FC = () => {
     const { login } = useAuth();
 
     const isLogin = location.pathname === '/login';
-    const [formData, setFormData] = useState({
-        email: '',
-        password: '',
-        full_name: '',
-        role: 'student' as 'doctor' | 'student',
-    });
+    const [formData, setFormData] = useState({ email: '', password: '', full_name: '' });
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
 
-    const handleSubmit = async (e: React.FormEvent) => {
-        e.preventDefault();
+    const updateField = (field: keyof typeof formData, value: string) => {
+        setFormData((current) => ({ ...current, [field]: value }));
+        // A message about the previous attempt should not survive an edit.
+        if (error) setError('');
+    };
+
+    const handleSubmit = async (event: React.FormEvent) => {
+        event.preventDefault();
+        if (loading) return;
+
         setError('');
         setLoading(true);
 
@@ -28,144 +33,185 @@ const AuthPage: React.FC = () => {
             if (isLogin) {
                 await login(formData.email, formData.password);
                 navigate('/dashboard');
-            } else {
-                await authService.register(formData);
-                await login(formData.email, formData.password);
-                navigate('/dashboard');
+                return;
             }
-        } catch (err: any) {
-            setError(err.response?.data?.detail || 'An error occurred');
+
+            await authService.register({
+                email: formData.email,
+                password: formData.password,
+                full_name: formData.full_name,
+            });
+            await login(formData.email, formData.password);
+            navigate('/dashboard');
+        } catch (err) {
+            setError(describeAuthError(err));
         } finally {
             setLoading(false);
         }
     };
 
     return (
-        <div className="min-h-screen bg-hero flex items-center justify-center p-4">
-            <div className="max-w-md w-full">
-                <div className="card">
-                    <div className="text-center mb-8">
-                        <h1 className="text-3xl font-display font-bold text-gray-900 mb-2">
-                            {isLogin ? 'Welcome Back' : 'Create Account'}
-                        </h1>
-                        <p className="text-gray-600">
-                            {isLogin ? 'Sign in to continue to MediQuery AI' : 'Join MediQuery AI today'}
-                        </p>
-                    </div>
+        <div className="flex min-h-screen bg-white">
+            <aside className="relative hidden w-[46%] flex-col justify-between bg-sky-100 p-10 lg:flex">
+                <Link to="/" className="flex items-center gap-2.5">
+                    <BrandMark />
+                    <span className="text-[15px] font-medium tracking-tight text-ink">MediQuery AI</span>
+                </Link>
 
-                    {error && (
-                        <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg flex items-start gap-3">
-                            <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
-                            <p className="text-sm text-red-800">{error}</p>
+                <div className="max-w-md">
+                    <span className="evidence-rule" aria-hidden="true" />
+                    <h1 className="mt-4 text-[30px] font-medium leading-[1.2] tracking-tight text-ink">
+                        Every answer opens to the page it came from
+                    </h1>
+                    <p className="mt-3 text-[13.5px] leading-relaxed text-ink-soft">
+                        Upload your own guidelines, papers and protocols. Ask in plain language. Read the
+                        passage behind each claim before you use it.
+                    </p>
+
+                    <div className="mt-8 rounded-card border border-white/70 bg-white/85 p-4 shadow-card backdrop-blur-sm">
+                        <div className="flex items-center gap-2">
+                            <span className="ref">1</span>
+                            <span className="flex items-center gap-1.5 text-[12px] font-medium text-ink">
+                                <FileText className="h-3.5 w-3.5 text-ink-muted" strokeWidth={1.75} />
+                                Guideline · page 12
+                            </span>
+                            <span className="ml-auto rounded-full border border-success/30 bg-success-soft px-2 py-0.5 text-[10.5px] font-medium text-success-ink">
+                                Verified
+                            </span>
                         </div>
-                    )}
+                        <p className="mt-2.5 text-[12.5px] leading-relaxed text-ink-soft">
+                            First-line management begins with lifestyle measures, with treatment added
+                            according to cardiovascular risk.
+                        </p>
+                        <div className="mt-3 flex items-center gap-3 border-t border-line pt-2.5 text-[11px] text-ink-muted">
+                            <span>4 of 4 claims supported</span>
+                            <span className="h-1 w-16 overflow-hidden rounded-full bg-sky-100">
+                                <span className="block h-full w-full rounded-full bg-royal/70" />
+                            </span>
+                        </div>
+                    </div>
+                </div>
 
-                    <form onSubmit={handleSubmit} className="space-y-4">
-                        {!isLogin && (
+                <p className="max-w-sm text-[11.5px] leading-relaxed text-ink-muted">
+                    MediQuery AI supports clinical reading. It does not replace professional judgement.
+                </p>
+            </aside>
+
+            <main className="flex flex-1 flex-col">
+                <div className="flex items-center justify-between px-5 py-5 sm:px-8">
+                    <Link
+                        to="/"
+                        className="btn-ghost -ml-2 text-[12.5px]"
+                    >
+                        <ArrowLeft className="h-3.5 w-3.5" strokeWidth={1.75} />
+                        Back to home
+                    </Link>
+                    <div className="flex items-center gap-2 lg:hidden">
+                        <BrandMark className="h-8 w-8" />
+                        <span className="text-[14px] font-medium text-ink">MediQuery AI</span>
+                    </div>
+                </div>
+
+                <div className="flex flex-1 items-center justify-center px-5 pb-12 sm:px-8">
+                    <div className="w-full max-w-[380px]">
+                        <h2 className="text-[24px] font-medium tracking-tight text-ink">
+                            {isLogin ? 'Sign in' : 'Create your account'}
+                        </h2>
+                        <p className="mt-1.5 text-[13px] text-ink-muted">
+                            {isLogin
+                                ? 'Continue to your evidence workspace'
+                                : 'One private workspace for your medical documents'}
+                        </p>
+
+                        {error && (
+                            <div className="alert-danger mt-5 flex items-start gap-2">
+                                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" strokeWidth={1.75} />
+                                <p role="alert">{error}</p>
+                            </div>
+                        )}
+
+                        <form onSubmit={handleSubmit} className="mt-6 space-y-4">
+                            {!isLogin && (
+                                <div>
+                                    <label htmlFor="full_name" className="field-label">
+                                        Full name
+                                    </label>
+                                    <input
+                                        id="full_name"
+                                        type="text"
+                                        required
+                                        autoComplete="name"
+                                        className="input"
+                                        value={formData.full_name}
+                                        onChange={(event) =>
+                                            updateField('full_name', event.target.value)
+                                        }
+                                        placeholder="Dr. Amara Okafor"
+                                    />
+                                </div>
+                            )}
+
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-2">
-                                    Full Name
+                                <label htmlFor="email" className="field-label">
+                                    Email
                                 </label>
                                 <input
-                                    type="text"
+                                    id="email"
+                                    type="email"
                                     required
+                                    autoComplete="email"
                                     className="input"
-                                    value={formData.full_name}
-                                    onChange={(e) => setFormData({ ...formData, full_name: e.target.value })}
-                                    placeholder="Dr. John Doe"
+                                    value={formData.email}
+                                    onChange={(event) => updateField('email', event.target.value)}
+                                    placeholder="you@clinic.org"
                                 />
                             </div>
-                        )}
 
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">
-                                Email Address
-                            </label>
-                            <input
-                                type="email"
-                                required
-                                className="input"
-                                value={formData.email}
-                                onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                                placeholder="you@example.com"
-                            />
-                        </div>
-
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">
-                                Password
-                            </label>
-                            <input
-                                type="password"
-                                required
-                                minLength={8}
-                                className="input"
-                                value={formData.password}
-                                onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                                placeholder="••••••••"
-                            />
-                        </div>
-
-                        {!isLogin && (
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-2">
-                                    I am a...
+                                <label htmlFor="password" className="field-label">
+                                    Password
                                 </label>
-                                <div className="grid grid-cols-2 gap-4">
-                                    <button
-                                        type="button"
-                                        onClick={() => setFormData({ ...formData, role: 'student' })}
-                                        className={`p-4 border-2 rounded-lg transition-all ${formData.role === 'student'
-                                                ? 'border-medical-blue bg-blue-50'
-                                                : 'border-gray-200 hover:border-gray-300'
-                                            }`}
-                                    >
-                                        <div className="font-semibold text-gray-900">Student</div>
-                                        <div className="text-sm text-gray-600">Medical Student</div>
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={() => setFormData({ ...formData, role: 'doctor' })}
-                                        className={`p-4 border-2 rounded-lg transition-all ${formData.role === 'doctor'
-                                                ? 'border-medical-blue bg-blue-50'
-                                                : 'border-gray-200 hover:border-gray-300'
-                                            }`}
-                                    >
-                                        <div className="font-semibold text-gray-900">Doctor</div>
-                                        <div className="text-sm text-gray-600">Medical Professional</div>
-                                    </button>
-                                </div>
+                                <input
+                                    id="password"
+                                    type="password"
+                                    required
+                                    minLength={isLogin ? undefined : 8}
+                                    maxLength={isLogin ? undefined : 72}
+                                    autoComplete={isLogin ? 'current-password' : 'new-password'}
+                                    className="input"
+                                    value={formData.password}
+                                    onChange={(event) => updateField('password', event.target.value)}
+                                    placeholder="At least 8 characters"
+                                />
                             </div>
-                        )}
 
-                        <button
-                            type="submit"
-                            disabled={loading}
-                            className="btn-primary w-full"
-                        >
-                            {loading ? 'Please wait...' : isLogin ? 'Sign In' : 'Create Account'}
-                        </button>
-                    </form>
+                            <button
+                                type="submit"
+                                disabled={loading}
+                                className="btn-primary w-full"
+                                aria-busy={loading}
+                            >
+                                {loading ? (isLogin ? 'Signing in…' : 'Creating account…') : isLogin ? 'Sign in' : 'Create account'}
+                            </button>
+                        </form>
 
-                    <div className="mt-6 text-center">
-                        <p className="text-sm text-gray-600">
-                            {isLogin ? "Don't have an account? " : 'Already have an account? '}
+                        <p className="mt-5 text-center text-[12.5px] text-ink-muted">
+                            {isLogin ? 'No account yet? ' : 'Already have an account? '}
                             <Link
                                 to={isLogin ? '/register' : '/login'}
-                                className="text-medical-blue font-semibold hover:underline"
+                                className="font-medium text-royal hover:underline"
                             >
-                                {isLogin ? 'Sign up' : 'Sign in'}
+                                {isLogin ? 'Create one' : 'Sign in'}
                             </Link>
+                        </p>
+
+                        <p className="mt-8 border-t border-line pt-4 text-[11px] leading-relaxed text-ink-muted">
+                            Your documents and questions stay private to your account. Nothing is shared
+                            between workspaces.
                         </p>
                     </div>
                 </div>
-
-                <div className="mt-6 text-center">
-                    <Link to="/" className="text-white hover:underline">
-                        ← Back to Home
-                    </Link>
-                </div>
-            </div>
+            </main>
         </div>
     );
 };

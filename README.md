@@ -1,612 +1,130 @@
-# 🧠 MediQuery AI - Production Full-Stack Agentic RAG Application
+# MediQuery AI — Cloud Medical RAG
 
-**MediQuery AI** is a production-ready, full-stack medical document assistant powered by Retrieval-Augmented Generation (RAG) technology with an **Agentic RAG** mode built on **LangGraph**. Features a modern React frontend, FastAPI backend, local embeddings, JWT authentication, and comprehensive analytics.
+MediQuery AI is a production-oriented, medical-domain RAG application. It ingests medical documents, stores them privately in Supabase Storage, indexes hybrid vectors + full-text search in Supabase PostgreSQL, and answers questions with a self-correcting (CRAG + Self-RAG) pipeline that grades evidence, verifies claims and abstains instead of guessing.
 
-[![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=for-the-badge&logo=fastapi)](https://fastapi.tiangolo.com/)
-[![React](https://img.shields.io/badge/React-20232A?style=for-the-badge&logo=react&logoColor=61DAFB)](https://reactjs.org/)
-[![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
-[![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-38B2AC?style=for-the-badge&logo=tailwind-css&logoColor=white)](https://tailwindcss.com/)
-[![LangGraph](https://img.shields.io/badge/LangGraph-1C3C3C?style=for-the-badge&logo=langchain&logoColor=white)](https://langchain-ai.github.io/langgraph/)
+**Stack:** FastAPI · SQLAlchemy/Alembic · Supabase (PostgreSQL + pgvector + Storage) · React 18 + TypeScript + Vite · hosted AI APIs (Gemini embeddings/vision, Groq LLM, Jina/Cohere reranking).
 
----
+> MediQuery AI supports medical professionals. It is **not** a medical device, does not diagnose or prescribe, and never replaces clinical judgement.
 
-## 🚀 Features
+## Architecture
 
-### Core Functionality
-- 📄 **Document Management** - Upload, manage, and delete medical PDFs with real-time processing
-- 🤖 **AI-Powered Chat** - Ask questions and get accurate, source-cited answers from your documents
-- 🧠 **Dual RAG Modes** - Switch between **Standard RAG** (single-pass) and **Agentic RAG** (LangGraph-powered multi-step reasoning)
-- 🔐 **Authentication** - JWT-based auth with role-based access control (Doctor/Student)
-- 📊 **Analytics Dashboard** - Track usage, queries, response times, and performance metrics
-- 🌍 **Multi-Language Support** - Query in any language with automatic translation
-- 🎨 **Modern UI** - Premium SaaS-grade interface with Tailwind CSS and smooth animations
+```
+Vercel (React SPA)  ──HTTPS/Bearer JWT──▶  Render (FastAPI)
+                                            │
+                     ┌──────────────────────┼───────────────────────┐
+                     ▼                      ▼                       ▼
+             Supabase PostgreSQL      Supabase Storage        Hosted AI APIs
+             users, documents,        private bucket,         embeddings (Gemini)
+             chunks + pgvector,       signed URLs             LLM (Groq)
+             jobs, graph, telemetry                           rerank (Jina/Cohere)
+                                                              OCR/vision (Gemini/OCR.space)
+                                                              web fallback (Europe PMC)
+```
 
-### Agentic RAG Features
-- **Query Analysis** - Normalizes user queries for optimal retrieval
-- **Relevance Grading** - LLM evaluates retrieved document relevance before answering
-- **Adaptive Query Rewriting** - Automatically rewrites queries when initial retrieval is insufficient
-- **Bounded Retry** - Maximum 2 retrieval attempts to prevent infinite loops
-- **Execution Transparency** - Real-time step-by-step status display (without exposing chain-of-thought)
-- **Graceful Fallback** - Falls back to Standard RAG if the agentic pipeline encounters errors
+### Request pipeline
 
-### Technical Features
-- **Local Embeddings** - Fast, unlimited document processing using HuggingFace (no API rate limits)
-- **RAG Pipeline** - LangChain + Groq LLaMA 3.3 70B + Pinecone vectorstore
-- **Agentic Orchestration** - LangGraph StateGraph with conditional routing and typed state
-- **User Isolation** - Documents stored in user-specific Pinecone namespaces
-- **Role-Based Prompting** - Tailored responses for medical professionals vs students
-- **Real-time Processing** - Upload progress tracking and status updates
-- **Source Citations** - Every answer includes document references with expandable sources
-- **Medical Safety** - Built-in constraints to prevent hallucination and inappropriate medical advice
+1. Medical-domain gatekeeper rejects non-medical questions before answering.
+2. Query rewriting, multi-query generation and medical abbreviation expansion.
+3. Hybrid retrieval: pgvector cosine search + PostgreSQL full-text search, fused with Reciprocal Rank Fusion, filtered by `user_id` and optional `document_id`.
+4. Hosted reranker reorders candidates; evidence grader decides sufficiency (CRAG).
+5. Corrective retry with a refined query (bounded by `AGENT_MAX_ATTEMPTS`).
+6. Optional trusted web fallback (Europe PMC / PubMed) only when documents are insufficient; results are labelled external.
+7. Grounded generation with numbered citations (document, page, table/chart, or external URL).
+8. Claim-level verification; unsupported sentences are removed; if nothing verifiable remains the answer is `Sorry, I don't know.`
+9. Full tracing: stage latencies, tokens, estimated cost, retries and errors are persisted.
 
----
+### Ingestion pipeline
 
-## 🧱 Tech Stack
+Upload → signature-based type detection → private Supabase Storage → durable DB job → medical validation → extraction (text, tables, charts, OCR/vision) → structure-aware chunking → hosted embeddings → pgvector + full-text index → knowledge-graph extraction → status/progress updated. Jobs retry and are safe across restarts.
+
+## Features
+
+- **One account type** — no doctor/student roles; every user sees only their own data.
+- **Medical gatekeeper** — content-based screening for documents and questions, with LLM escalation for borderline material.
+- **Multimodal ingestion** — PDF (text/scanned), DOCX, XLSX, CSV, TXT, JPG/JPEG/PNG; tables keep headers, charts are interpreted by a hosted vision model.
+- **Hybrid search + RRF + reranking** — better recall for drug names, abbreviations and numbers.
+- **Self-correcting RAG** — evidence grading, query refinement, bounded retries, abstention.
+- **Evidence citations** — claim-level mapping to document/page/table or external URL.
+- **Trusted web fallback** — Europe PMC (PubMed/MEDLINE), clearly marked as external and off by default.
+- **Graph RAG** — entities/relations extracted from your own documents for multi-hop context.
+- **Controlled tools / MCP-style endpoint** — allow-listed PubMed, openFDA drug labels and ICD-10 lookups with validation, timeouts and traces.
+- **Observability** — request IDs, stage latencies, token usage, cost estimates, retry counts, processing status.
+- **Evaluation** — reproducible dataset and metrics for retrieval, groundedness, citation correctness and hallucination rate.
+
+## Local development
 
 ### Backend
-| Component | Technology | Purpose |
-|-----------|------------|---------|
-| **Framework** | FastAPI | High-performance async web framework |
-| **Database** | SQLAlchemy (SQLite/PostgreSQL) | ORM for user, document, and analytics data |
-| **Authentication** | JWT (python-jose) | Secure token-based authentication |
-| **LLM** | Groq API (LLaMA 3.3 70B) | Fast inference for question answering |
-| **Embeddings** | HuggingFace (all-MiniLM-L6-v2) | Local embeddings (384 dimensions) |
-| **Vector DB** | Pinecone | Serverless vector database for semantic search |
-| **Orchestration** | LangChain | RAG pipeline and retrieval chain |
-| **Agentic RAG** | LangGraph | StateGraph workflow for multi-step retrieval |
-| **Translation** | deep-translator | Multi-language support |
-| **PDF Processing** | PyPDF | Document parsing and text extraction |
+
+```bash
+cd backend
+python -m venv .venv
+# Windows: .venv\Scripts\activate    macOS/Linux: source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env      # fill in keys; SQLite + local storage work for dev
+python -m uvicorn app.main:app --reload
+```
+
+- API docs: http://localhost:8000/api/docs
+- Health: http://localhost:8000/health (shows which providers are configured, never keys)
+
+Local development defaults to SQLite and `STORAGE_BACKEND=local`. Production validates and rejects both. Tables are created automatically **only** outside production; production uses Alembic.
 
 ### Frontend
-| Component | Technology | Purpose |
-|-----------|------------|---------|
-| **Framework** | React 18 + TypeScript | Type-safe component-based UI |
-| **Build Tool** | Vite | Fast development and optimized builds |
-| **Styling** | Tailwind CSS | Utility-first CSS framework |
-| **Routing** | React Router v6 | Client-side routing |
-| **State** | Context API | Global auth and user state |
-| **HTTP Client** | Axios | API communication with interceptors |
-| **Charts** | Recharts | Analytics visualizations |
-| **Icons** | Lucide React | Modern icon library |
 
----
-
-## 📁 Project Structure
-
-```
-RAG-chatbot/
-├── backend/
-│   ├── app/
-│   │   ├── models/              # SQLAlchemy models
-│   │   │   ├── user.py          # User model
-│   │   │   ├── document.py      # Document model
-│   │   │   └── analytics.py     # QueryLog, UsageStats
-│   │   ├── routes/              # API endpoints
-│   │   │   ├── auth.py          # Authentication routes
-│   │   │   ├── documents.py     # Document management
-│   │   │   ├── chat.py          # Chat/query endpoints
-│   │   │   └── analytics.py     # Analytics endpoints
-│   │   ├── services/            # Business logic
-│   │   │   ├── auth.py          # JWT, password hashing
-│   │   │   ├── vectorstore.py   # Embeddings, Pinecone
-│   │   │   ├── llm.py           # LLM chain, prompts
-│   │   │   ├── agentic_rag.py   # LangGraph Agentic RAG workflow
-│   │   │   ├── translation.py   # Multi-language
-│   │   │   └── analytics.py     # Usage tracking
-│   │   ├── middlewares/         # Middleware
-│   │   │   └── auth_middleware.py
-│   │   ├── schemas/             # Pydantic models
-│   │   ├── database.py          # DB configuration
-│   │   └── main.py              # FastAPI app
-│   ├── requirements.txt         # Python dependencies
-│   ├── init_db.py               # Database initialization
-│   ├── Procfile                 # Deployment config
-│   └── .env.example             # Environment template
-│
-├── frontend/
-│   ├── src/
-│   │   ├── pages/               # React pages
-│   │   │   ├── LoginPage.tsx
-│   │   │   ├── RegisterPage.tsx
-│   │   │   ├── DashboardPage.tsx
-│   │   │   ├── DocumentsPage.tsx
-│   │   │   ├── ChatPage.tsx
-│   │   │   └── AnalyticsPage.tsx
-│   │   ├── components/          # Reusable components
-│   │   │   ├── layout/          # Navbar, Footer
-│   │   │   └── common/          # LoadingSpinner, etc.
-│   │   ├── services/            # API services
-│   │   │   ├── api.ts           # Axios instance
-│   │   │   ├── auth.service.ts
-│   │   │   ├── document.service.ts
-│   │   │   ├── chat.service.ts
-│   │   │   └── analytics.service.ts
-│   │   ├── contexts/            # React context
-│   │   │   └── AuthContext.tsx
-│   │   ├── lib/                 # Utilities
-│   │   └── main.tsx             # Entry point
-│   ├── package.json             # Node dependencies
-│   ├── tailwind.config.js       # Tailwind configuration
-│   ├── vercel.json              # Vercel deployment
-│   └── .env.example             # Environment template
-│
-├── demo/                        # Sample medical documents
-└── README.md                    # This file
+```bash
+cd frontend
+npm install
+cp .env.example .env      # VITE_API_BASE_URL=http://localhost:8000
+npm run dev
 ```
 
----
+## Tests
 
-## 🛠️ Local Development Setup
-
-### Prerequisites
-- **Python** 3.11+
-- **Node.js** 18+
-- **npm** or yarn
-- **API Keys**:
-  - Groq API key (free at [console.groq.com](https://console.groq.com))
-  - Pinecone API key (free at [pinecone.io](https://www.pinecone.io/))
-
-### Backend Setup
-
-1. **Navigate to backend directory**
-   ```bash
-   cd backend
-   ```
-
-2. **Create virtual environment**
-   ```bash
-   python -m venv venv
-   
-   # Windows
-   venv\Scripts\activate
-   
-   # Mac/Linux
-   source venv/bin/activate
-   ```
-
-3. **Install dependencies**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-4. **Configure environment variables**
-   ```bash
-   cp .env.example .env
-   ```
-   
-   Edit `.env` with your API keys:
-   ```env
-   # Database
-   DATABASE_URL=sqlite:///./mediquery.db
-   
-   # Authentication
-   JWT_SECRET=your-secret-key-min-32-characters-long
-   JWT_ALGORITHM=HS256
-   
-   # LLM
-   GROQ_API_KEY=your_groq_api_key
-   
-   # Vector Database
-   PINECONE_API_KEY=your_pinecone_api_key
-   PINECONE_INDEX_NAME=medical-local-384
-   ```
-
-5. **Initialize database**
-   ```bash
-   python init_db.py
-   ```
-
-6. **Run the server**
-
-    medicalAssistant\Scripts\activate
-
-   ```bash
-   python -m uvicorn app.main:app --reload
-   ```
-   
-   - API: `http://localhost:8000`
-   - Docs: `http://localhost:8000/api/docs`
-   - Health: `http://localhost:8000/health`
-
-### Frontend Setup
-
-1. **Navigate to frontend directory**
-   ```bash
-   cd frontend
-   ```
-
-2. **Install dependencies**
-   ```bash
-   npm install
-   ```
-
-3. **Configure environment**
-   ```bash
-   cp .env.example .env
-   ```
-   
-   Edit `.env`:
-   ```env
-   VITE_API_BASE_URL=http://localhost:8000
-   ```
-
-4. **Run development server**
-   ```bash
-   npm run dev
-   ```
-   
-   App will be available at `http://localhost:5173`
-
----
-
-## 🚢 Production Deployment
-
-### Frontend Deployment (Vercel)
-
-1. **Push code to GitHub**
-
-2. **Connect to Vercel**
-   - Go to [vercel.com](https://vercel.com)
-   - Import your repository
-   - Set root directory to `frontend`
-   - Framework preset: Vite
-   
-3. **Add environment variable**
-   ```
-   VITE_API_BASE_URL=https://your-backend-url.com
-   ```
-
-4. **Deploy**
-   - Vercel auto-deploys on push to main branch
-
-### Backend Deployment (Render)
-
-1. **Create new Web Service**
-   - Connect repository
-   - Root directory: `backend`
-   - Build command: `pip install -r requirements.txt`
-   - Start command: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
-
-2. **Add environment variables**
-   ```
-   DATABASE_URL=postgresql://user:pass@host:5432/mediquery
-   JWT_SECRET=your-production-secret-key
-   GROQ_API_KEY=your_key
-   PINECONE_API_KEY=your_key
-   PINECONE_INDEX_NAME=medical-local-384
-   ```
-
-3. **Deploy**
-
----
-
-## 📖 API Documentation
-
-### Authentication Endpoints
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/v1/auth/register` | Register new user |
-| POST | `/api/v1/auth/login` | Login and get JWT tokens |
-| POST | `/api/v1/auth/refresh` | Refresh access token |
-| GET | `/api/v1/auth/me` | Get current user profile |
-
-### Document Endpoints
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/v1/documents/upload` | Upload PDF documents |
-| GET | `/api/v1/documents` | List user's documents |
-| GET | `/api/v1/documents/{id}/status` | Get document status |
-| DELETE | `/api/v1/documents/{id}` | Delete document and vectors |
-
-### Chat Endpoints
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/v1/chat/query` | Ask question — supports `mode: "standard"` or `"agentic"` |
-| POST | `/api/v1/chat/query-multilang` | Ask question (any language) |
-| GET | `/api/v1/chat/history` | Get chat history |
-| DELETE | `/api/v1/chat/history` | Clear chat history |
-
-#### Chat Query Request Body
-
-```json
-{
-  "question": "What are the complications of diabetes?",
-  "language": "en",
-  "mode": "agentic"
-}
+```bash
+cd backend
+.venv/Scripts/python.exe -m pytest -q      # 27 tests, no external API calls
+cd ../frontend
+npm run build
 ```
 
-- `mode` is optional (default: `"standard"`). Set to `"agentic"` to use the LangGraph Agentic RAG pipeline.
+Backend tests replace every hosted provider with deterministic fakes and use temporary SQLite + local storage.
 
-#### Agentic RAG Response (additional fields)
+### RAG evaluation
 
-```json
-{
-  "answer": "...",
-  "sources": [...],
-  "response_time": 4.2,
-  "language": "en",
-  "mode": "agentic",
-  "agent_metadata": {
-    "retrieval_attempts": 2,
-    "retrieval_refined": true,
-    "documents_retrieved": 5,
-    "relevance_score": 0.87,
-    "steps": [
-      "Query analyzed",
-      "Retrieved 5 documents (attempt 1)",
-      "Context relevance: insufficient (score: 0.35)",
-      "Query refined",
-      "Retrieved 5 documents (attempt 2)",
-      "Context relevance: sufficient (score: 0.87)",
-      "Final answer generated"
-    ],
-    "fallback_to_standard": false
-  }
-}
+```bash
+cd backend
+python -m app.evaluation.runner --user-email you@example.com --output app/evaluation/reports/latest.json
 ```
 
-### Analytics Endpoints
+Upload the files in `demo/` first. Metrics include retrieval precision/recall, context relevance, answer relevance, faithfulness, groundedness, citation correctness and hallucination rate.
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/v1/analytics/overview` | Get usage overview stats |
-| GET | `/api/v1/analytics/usage-graph` | Get usage graph data |
-| GET | `/api/v1/analytics/top-topics` | Get top queried topics |
+## API overview
 
----
+| Method | Endpoint | Purpose |
+|---|---|---|
+| POST | `/api/v1/auth/register` | Create a unified account |
+| POST | `/api/v1/auth/login` / `/refresh` | JWT access + refresh tokens |
+| GET | `/api/v1/auth/me` | Current profile |
+| POST | `/api/v1/documents/upload` | Upload and queue multimodal documents |
+| GET | `/api/v1/documents` | List owned documents |
+| GET | `/api/v1/documents/{id}/status` | Processing progress/status |
+| GET | `/api/v1/documents/{id}/download` | Short-lived signed URL |
+| POST | `/api/v1/documents/{id}/reindex` | Queue re-indexing |
+| DELETE | `/api/v1/documents/{id}` | Delete chunks, graph data and stored object |
+| POST | `/api/v1/chat/query` | Hybrid + self-correcting RAG answer |
+| POST | `/api/v1/chat/query-multilang` | Translate → RAG → translate back |
+| GET/DELETE | `/api/v1/chat/history` | History (delete clears it) |
+| GET | `/api/v1/analytics/overview` | Usage summary |
+| GET | `/api/v1/analytics/observability` | Latency, tokens, cost, abstention |
+| GET | `/api/v1/analytics/processing-status` | Job/document status |
+| GET | `/api/v1/tools`, POST `/api/v1/mcp` | Approved tool manifests / MCP JSON-RPC |
+| POST | `/api/v1/internal/jobs/run` | Worker-token job trigger |
 
-## 🏗️ Architecture & Data Flow
+## Documentation
 
-### Standard RAG Pipeline
+- `DEPLOYMENT.md` — Supabase, migrations, storage bucket, AI keys, Render, Vercel, verification and troubleshooting.
+- `backend/.env.example` — every environment variable with a safe placeholder.
 
-```
-User Question
-    ↓
-[1] Embed Query (HuggingFace local model)
-    ↓
-[2] Search Pinecone (user's namespace)
-    ↓
-[3] Retrieve Top-3 Documents
-    ↓
-[4] Build Context + Prompt
-    ↓
-[5] LLM Generation (Groq)
-    ↓
-[6] Return Answer + Sources
-```
+## Known limitations
 
-### Agentic RAG Pipeline (LangGraph)
-
-```
-                    USER QUESTION
-                         │
-                         ▼
-                ┌─────────────────┐
-                │  analyze_query  │  ← Normalize query for retrieval
-                └────────┬────────┘
-                         │
-                         ▼
-              ┌────────────────────┐
-              │ retrieve_documents │  ← Pinecone top-5, user namespace
-              └────────┬───────────┘
-                       │
-                       ▼
-              ┌─────────────────┐
-              │ grade_documents │  ← LLM relevance scoring
-              └───────┬─────────┘
-                     ╱ ╲
-                    ╱   ╲
-            RELEVANT     NOT RELEVANT
-              │            │
-              ▼            ▼
-     ┌─────────────┐  ┌──────────────┐
-     │  generate   │  │ rewrite_query│ ← Improve search terms
-     │   answer    │  └──────┬───────┘
-     └──────┬──────┘         │
-            │                ▼
-            │         retrieve_documents
-            │                │
-            │                ▼
-            │         grade_documents
-            │                │
-            ├────────────────┘
-            │
-            ▼
-      FINAL RESPONSE
-     Answer + Sources
-    + Agent Metadata
-```
-
-**Key Design:**
-- Maximum **2 retrieval attempts** (bounded, no infinite loops)
-- Relevance threshold: **0.6** (score 0.0–1.0)
-- If still insufficient after max retries → generates safe "information not found" response
-- Graceful fallback to Standard RAG on pipeline failure
-
-### Document Upload Flow
-
-```
-PDF Upload
-    ↓
-[1] Save to disk
-    ↓
-[2] Create DB record (status: PROCESSING)
-    ↓
-[3] Load PDF with PyPDF
-    ↓
-[4] Split into chunks (500 chars, 50 overlap)
-    ↓
-[5] Generate embeddings (local, batch)
-    ↓
-[6] Upsert to Pinecone (user namespace)
-    ↓
-[7] Update DB (status: COMPLETED)
-```
-
-### Authentication Flow
-
-```
-Login Request
-    ↓
-[1] Validate credentials
-    ↓
-[2] Generate JWT tokens (access + refresh)
-    ↓
-[3] Return tokens to client
-    ↓
-[4] Client stores in localStorage
-    ↓
-[5] Axios interceptor adds to requests
-    ↓
-[6] Backend validates on protected routes
-```
-
----
-
-## 🔒 Security Features
-
-- **JWT Authentication** - Secure token-based auth with expiration
-- **Password Hashing** - bcrypt for secure password storage
-- **User Isolation** - Documents stored in user-specific Pinecone namespaces
-- **CORS Protection** - Configured allowed origins only
-- **Input Validation** - Pydantic schemas validate all API inputs
-- **SQL Injection Protection** - SQLAlchemy ORM prevents injection
-- **Medical Safety** - Prompts explicitly prevent medical advice/diagnosis
-- **Rate Limiting** - Can be added with slowapi middleware
-
----
-
-## 📊 Key Technical Decisions
-
-### Why Local Embeddings?
-- **Speed**: 2 seconds vs 2+ minutes with Google API
-- **Cost**: Completely free, no API limits
-- **Privacy**: Data never leaves your infrastructure
-- **Reliability**: No dependency on external API availability
-
-### Why Pinecone?
-- **Serverless**: No infrastructure management
-- **Fast**: Sub-100ms query latency
-- **Scalable**: Handles millions of vectors
-- **Namespaces**: Built-in user isolation
-
-### Why Groq?
-- **Speed**: Fastest LLM inference (300+ tokens/sec)
-- **Free Tier**: Generous free usage
-- **Quality**: LLaMA 3.3 70B is highly capable
-- **API**: Simple, OpenAI-compatible API
-
-### Why FastAPI?
-- **Performance**: Async support, fast execution
-- **Type Safety**: Pydantic validation
-- **Auto Docs**: Swagger UI out of the box
-- **Modern**: Python 3.11+ features
-
----
-
-## ⚠️ Medical Disclaimer
-
-**IMPORTANT**: MediQuery AI is for **informational and educational purposes only**. It is **NOT a substitute** for professional medical advice, diagnosis, or treatment. Always seek the advice of qualified healthcare professionals with any questions regarding medical conditions.
-
-The system is designed with safety constraints:
-- Does not provide medical diagnoses
-- Does not recommend treatments
-- Always cites sources
-- Encourages consulting healthcare professionals
-
----
-
-## 🎯 Performance Metrics
-
-- **Document Upload**: ~2 seconds (6-page PDF)
-- **Query Response**: ~3 seconds (including LLM)
-- **Embedding Generation**: ~300ms (local)
-- **Vector Search**: <100ms (Pinecone)
-- **Frontend Build**: ~30 seconds
-- **Cold Start**: <5 seconds (serverless)
-
----
-
-## 🧪 Testing
-
-### Manual Testing Checklist
-
-- [ ] User registration and login
-- [ ] Document upload (PDF)
-- [ ] Document deletion
-- [ ] Chat query with valid documents (Standard RAG)
-- [ ] Chat query with valid documents (Agentic RAG)
-- [ ] Chat query without documents (404 error)
-- [ ] Multi-language query
-- [ ] Analytics dashboard updates
-- [ ] Token refresh on expiration
-- [ ] Role-based prompt differences
-- [ ] Agentic RAG — query rewrite triggers on poor retrieval
-- [ ] Agentic RAG — max retry limit (2 attempts) is respected
-- [ ] Agentic RAG — unrelated question returns "not found" (no hallucination)
-- [ ] Agentic RAG — user isolation (only retrieves from own namespace)
-- [ ] Agentic RAG — graceful fallback to Standard RAG on error
-- [ ] Mode selector UI toggles correctly between Standard and Agentic
-
-### API Testing
-
-Use the interactive docs at `http://localhost:8000/api/docs` to test all endpoints.
-
----
-
-## 🤝 Contributing
-
-This is a portfolio project. For questions or suggestions, please open an issue on GitHub.
-
----
-
-## 📝 License
-
-This project is for educational and portfolio purposes.
-
----
-
-## � Learning Resources
-
-- [FastAPI Documentation](https://fastapi.tiangolo.com/)
-- [LangChain Documentation](https://python.langchain.com/)
-- [Pinecone Documentation](https://docs.pinecone.io/)
-- [React Documentation](https://react.dev/)
-- [Tailwind CSS Documentation](https://tailwindcss.com/docs)
-
----
-
-## 🚀 Future Enhancements
-
-- [x] ~~Agentic RAG with LangGraph~~ ✅ Implemented
-- [ ] Streaming responses in chat
-- [ ] Agentic RAG streaming (step-by-step live updates via SSE/WebSocket)
-- [ ] Document OCR support for scanned PDFs
-- [ ] Voice input/output
-- [ ] Mobile app (React Native)
-- [ ] Advanced analytics with ML insights
-- [ ] Collaborative features (share documents)
-- [ ] Export chat history to PDF
-- [ ] Custom model fine-tuning
-- [ ] Multi-modal support (images, tables)
-- [ ] Real-time collaboration
-- [ ] Multi-agent workflows (research, summarize, compare agents)
-
----
-
-## 📧 Contact
-
-For questions about this project, please open an issue on GitHub.
-
----
-
-**Built with ❤️ for medical professionals and students**
-
-*Powered by FastAPI, React, LangChain, LangGraph, Groq, and Pinecone*
-
-
-python -m uvicorn app.main:app --reload
+See `DEPLOYMENT.md` §9: free-tier AI quotas are rate-limited; the in-memory rate limiter and in-process worker are per-instance; the lexical reranker fallback is weaker than a hosted cross-encoder; scanned PDF OCR is capped per document to control cost.
