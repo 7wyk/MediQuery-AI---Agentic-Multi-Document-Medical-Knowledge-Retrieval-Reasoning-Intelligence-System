@@ -5,6 +5,7 @@ from logging.config import fileConfig
 
 from alembic import context
 from sqlalchemy import engine_from_config, pool
+from sqlalchemy.engine import make_url
 
 from app.config import get_settings
 import app.models  # noqa: F401 - register all models on Base.metadata
@@ -12,7 +13,18 @@ from app.database import Base
 
 config = context.config
 settings = get_settings()
-config.set_main_option("sqlalchemy.url", settings.database_url.replace("%", "%%"))
+
+# Alembic must target the same Supabase PostgreSQL database as the application.
+parsed_url = make_url(settings.database_url)
+if parsed_url.get_backend_name() != "postgresql":
+    raise RuntimeError("Alembic supports Supabase PostgreSQL only; SQLite is disabled.")
+
+# Use the Psycopg 3 SQLAlchemy dialect consistently.
+alembic_url = parsed_url.set(drivername="postgresql+psycopg")
+config.set_main_option(
+    "sqlalchemy.url",
+    alembic_url.render_as_string(hide_password=False).replace("%", "%%"),
+)
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
@@ -23,7 +35,7 @@ logger = logging.getLogger("alembic.env")
 
 def run_migrations_offline() -> None:
     context.configure(
-        url=settings.database_url,
+        url=alembic_url.render_as_string(hide_password=False),
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},

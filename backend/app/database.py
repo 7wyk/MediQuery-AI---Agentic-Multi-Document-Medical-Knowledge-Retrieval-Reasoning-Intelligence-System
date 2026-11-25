@@ -1,54 +1,60 @@
-"""SQLAlchemy engine/session setup.
+"""SQLAlchemy engine/session setup for Supabase PostgreSQL only.
 
-Production uses Supabase PostgreSQL with a pooled connection.  SQLite is only
-used for local development and the automated test-suite; schema evolution in
-production is handled exclusively by Alembic (see ``backend/alembic``).
+SQLite is intentionally unsupported. Use Alembic for all schema changes.
 """
-
 from __future__ import annotations
 
 import logging
 from typing import Generator
 
-from sqlalchemy import create_engine, event
-from sqlalchemy.engine import Engine
+from sqlalchemy import create_engine
+from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
-
 settings = get_settings()
-DATABASE_URL = settings.database_url
 
-_engine_kwargs: dict = {"pool_pre_ping": True, "echo": settings.db_echo}
+try:
+    parsed_url = make_url(settings.database_url.strip())
 
-if DATABASE_URL.startswith("sqlite"):
-    _engine_kwargs["connect_args"] = {"check_same_thread": False}
-else:
-    _engine_kwargs.update(
-        pool_size=settings.db_pool_size,
-        max_overflow=settings.db_max_overflow,
-        pool_recycle=settings.db_pool_recycle,
-    )
+    if parsed_url.get_backend_name() != "postgresql":
+        raise ValueError("Only PostgreSQL is supported; SQLite is disabled.")
 
-engine: Engine = create_engine(DATABASE_URL, **_engine_kwargs)
+    if not parsed_url.host or not parsed_url.database:
+        raise ValueError("PostgreSQL URL must include a host and database name.")
 
-if DATABASE_URL.startswith("sqlite"):
+    # Use Psycopg 3 explicitly, regardless of whether Supabase supplied
+    # postgresql:// or postgresql+psycopg://.
+    DATABASE_URL = parsed_url.set(drivername="postgresql+psycopg")
 
-    @event.listens_for(engine, "connect")
-    def _enable_sqlite_foreign_keys(dbapi_connection, _record):  # pragma: no cover - driver hook
-        cursor = dbapi_connection.cursor()
-        cursor.execute("PRAGMA foreign_keys=ON")
-        cursor.close()
+except Exception as exc:
+    raise RuntimeError(
+        "Invalid DATABASE_URL. Configure a valid Supabase PostgreSQL connection URL."
+    ) from exc
 
+engine: Engine = create_engine(
+    DATABASE_URL,
+    pool_pre_ping=True,
+    pool_size=settings.db_pool_size,
+    max_overflow=settings.db_max_overflow,
+    pool_recycle=settings.db_pool_recycle,
+    pool_timeout=30,
+    echo=settings.db_echo,
+)
 
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+SessionLocal = sessionmaker(
+    autocommit=False,
+    autoflush=False,
+    bind=engine,
+)
+
 Base = declarative_base()
 
 
 def get_db() -> Generator:
-    """FastAPI dependency yielding a scoped session."""
+    """Yield a SQLAlchemy session and always close it."""
     db = SessionLocal()
     try:
         yield db
@@ -57,4 +63,5 @@ def get_db() -> Generator:
 
 
 def is_postgres() -> bool:
+    """This engine can only be constructed for PostgreSQL."""
     return engine.dialect.name == "postgresql"

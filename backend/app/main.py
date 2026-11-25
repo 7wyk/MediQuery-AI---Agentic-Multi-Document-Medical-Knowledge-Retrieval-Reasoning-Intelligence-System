@@ -1,9 +1,9 @@
 """FastAPI application entrypoint for MediQuery AI."""
-
 from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, status
@@ -12,8 +12,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
-from app.config import ConfigurationError, get_settings, validate_for_startup
-from app.database import Base, SessionLocal, engine
+from app.config import get_settings, validate_for_startup
+from app.database import SessionLocal, engine
 from app.middlewares.http import RateLimitMiddleware, RequestContextMiddleware
 from app.providers.registry import provider_status
 from app.routes import analytics, auth, chat, documents, internal, tools
@@ -27,25 +27,31 @@ logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):  # noqa: ANN201
+async def lifespan(app: FastAPI):
+    # Validate mandatory configuration and prove the Supabase DB is reachable.
     validate_for_startup(settings)
-
-    if not settings.is_production:
-        # Development/test convenience only; production schema comes from Alembic.
-        Base.metadata.create_all(bind=engine)
+    with engine.connect() as connection:
+        connection.execute(text("SELECT 1"))
 
     status_report = provider_status(settings)
-    missing = [name for name, info in status_report.items() if not info.get("configured")]
+    missing = [
+        name for name, info in status_report.items()
+        if not info.get("configured")
+    ]
     if missing:
         logger.warning("Providers not configured: %s", ", ".join(missing))
 
     stop_event = asyncio.Event()
     worker_task = None
+
     if settings.background_worker_enabled:
         worker_task = asyncio.create_task(worker_loop(stop_event))
         logger.info("In-process background worker enabled")
 
-    logger.info("MediQuery AI started environment=%s", settings.environment)
+    logger.info(
+        "MediQuery AI started environment=%s database=Supabase PostgreSQL storage=Supabase",
+        settings.environment,
+    )
     try:
         yield
     finally:
@@ -73,11 +79,12 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_allow_list,
-    # Development only: localhost/127.0.0.1 on any port.  Empty in production.
     allow_origin_regex=settings.cors_origin_regex or None,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "X-Request-ID", "X-Worker-Token"],
+    allow_headers=[
+        "Authorization", "Content-Type", "X-Request-ID", "X-Worker-Token"
+    ],
     expose_headers=["X-Request-ID", "X-Process-Time"],
 )
 app.add_middleware(RequestContextMiddleware)
@@ -94,7 +101,9 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
-    logger.exception("Unhandled error on %s %s", request.method, request.url.path)
+    logger.exception(
+        "Unhandled error on %s %s", request.method, request.url.path
+    )
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content={"detail": "An internal server error occurred."},
@@ -107,14 +116,15 @@ async def health_check():
     try:
         with SessionLocal() as db:
             db.execute(text("SELECT 1"))
-    except Exception as exc:  # noqa: BLE001
-        logger.error("Health check database failure: %s", exc)
+    except Exception as exc:
+        logger.error("Health check database failure: %s", type(exc).__name__)
         database_ok = False
+
     return {
         "status": "healthy" if database_ok else "degraded",
         "service": "MediQuery AI API",
         "version": settings.api_version,
-        "database": "ok" if database_ok else "unavailable",
+        "database": "supabase-postgresql" if database_ok else "unavailable",
         "config": settings.public_summary(),
         "providers": provider_status(settings),
     }
@@ -138,9 +148,7 @@ app.include_router(tools.router)
 app.include_router(internal.router)
 
 
-if __name__ == "__main__":  # pragma: no cover
-    import os
-
+if __name__ == "__main__":
     import uvicorn
 
     uvicorn.run(
