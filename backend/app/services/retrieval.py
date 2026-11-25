@@ -161,6 +161,11 @@ async def vector_search(
     vector_literal = "[" + ",".join(f"{float(v):.7f}" for v in query_embedding) + "]"
 
     if is_postgres():
+        # Only add the IN clause when a non-empty document filter was supplied.
+        # Expanding an empty SQLAlchemy IN parameter on PostgreSQL can produce
+        # an integer-typed empty SELECT, which is incompatible with UUID strings
+        # stored in chunks.document_id (VARCHAR).
+        document_filter = "AND c.document_id IN :doc_ids" if document_ids else ""
         sql = f"""
             SELECT c.id, c.document_id, c.user_id, c.content, c.content_type, c.page,
                    c.section, c.table_id, c.chunk_metadata, d.filename,
@@ -169,21 +174,20 @@ async def vector_search(
             JOIN documents d ON d.id = c.document_id
             WHERE c.user_id = :user_id
               AND c.embedding IS NOT NULL
-              AND (:filter_docs = 0 OR c.document_id IN :doc_ids)
+              {document_filter}
             ORDER BY (c.embedding::vector({dim})) <=> CAST(:qv AS vector({dim}))
             LIMIT :limit
         """
-        stmt = text(sql).bindparams(bindparam("doc_ids", expanding=True))
-        rows = db.execute(
-            stmt,
-            {
-                "qv": vector_literal,
-                "user_id": int(user_id),
-                "filter_docs": 1 if document_ids else 0,
-                "doc_ids": list(document_ids or []),
-                "limit": int(top_k),
-            },
-        ).fetchall()
+        stmt = text(sql)
+        params = {
+            "qv": vector_literal,
+            "user_id": int(user_id),
+            "limit": int(top_k),
+        }
+        if document_ids:
+            stmt = stmt.bindparams(bindparam("doc_ids", expanding=True))
+            params["doc_ids"] = [str(document_id) for document_id in document_ids]
+        rows = db.execute(stmt, params).fetchall()
         return _rows_to_hits(rows)
 
     # Development/test fallback: exact cosine over the user's chunks.
@@ -236,7 +240,11 @@ async def keyword_search(
         tsquery = build_or_tsquery(query)
         if not tsquery:
             return []
-        sql = """
+        # As in vector_search, omit the filter completely when no document IDs
+        # were selected. This avoids PostgreSQL's VARCHAR-versus-INTEGER error
+        # from SQLAlchemy's generated empty expanding parameter.
+        document_filter = "AND c.document_id IN :doc_ids" if document_ids else ""
+        sql = f"""
             SELECT c.id, c.document_id, c.user_id, c.content, c.content_type, c.page,
                    c.section, c.table_id, c.chunk_metadata, d.filename,
                    ts_rank_cd(to_tsvector('english', c.content),
@@ -244,23 +252,22 @@ async def keyword_search(
             FROM chunks c
             JOIN documents d ON d.id = c.document_id
             WHERE c.user_id = :user_id
-              AND (:filter_docs = 0 OR c.document_id IN :doc_ids)
+              {document_filter}
               AND to_tsvector('english', c.content) @@ to_tsquery('english', :q)
             ORDER BY score DESC
             LIMIT :limit
         """
-        stmt = text(sql).bindparams(bindparam("doc_ids", expanding=True))
+        stmt = text(sql)
+        params = {
+            "q": tsquery,
+            "user_id": int(user_id),
+            "limit": int(top_k),
+        }
+        if document_ids:
+            stmt = stmt.bindparams(bindparam("doc_ids", expanding=True))
+            params["doc_ids"] = [str(document_id) for document_id in document_ids]
         try:
-            rows = db.execute(
-                stmt,
-                {
-                    "q": query,
-                    "user_id": int(user_id),
-                    "filter_docs": 1 if document_ids else 0,
-                    "doc_ids": list(document_ids or []),
-                    "limit": int(top_k),
-                },
-            ).fetchall()
+            rows = db.execute(stmt, params).fetchall()
         except Exception as exc:  # noqa: BLE001 - malformed tsquery etc.
             logger.warning("Full-text query failed: %s", exc)
             db.rollback()
